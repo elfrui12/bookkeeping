@@ -1097,10 +1097,10 @@ async function loadData() {
     budgets = buds || [];
   } catch (e) { console.error('Load budgets:', e); }
 
+  // 月总预算存本地
   try {
-    const month = new Date().toISOString().slice(0, 7);
-    const monthBud = await sb('month_budgets').eq('user_id', currentUser.id).eq('month', month).select('*');
-    monthBudget = monthBud && monthBud.length > 0 ? monthBud[0] : null;
+    const mb = localStorage.getItem('month_budget');
+    monthBudget = mb ? JSON.parse(mb) : null;
   } catch (e) { monthBudget = null; }
 }
 
@@ -1753,20 +1753,13 @@ function renderSettings() {
   renderBudgetSettings();
 }
 
-async function saveMonthBudget() {
-  if (!currentUser) return;
+function saveMonthBudget() {
   const amount = parseFloat(document.getElementById('monthBudgetInput').value);
   if (!amount || amount <= 0) { toast('请输入有效的预算金额'); return; }
-
-  const month = new Date().toISOString().slice(0, 7);
-  try {
-    await sb('month_budgets').eq('user_id', currentUser.id).eq('month', month).delete();
-    await sb('month_budgets').insert({ user_id: currentUser.id, amount, month });
-    const monthBud = await sb('month_budgets').eq('user_id', currentUser.id).eq('month', month).select('*');
-    monthBudget = monthBud && monthBud.length > 0 ? monthBud[0] : null;
-    renderAll();
-    toast('月总预算已更新');
-  } catch (e) { toast('更新失败: ' + e.message); }
+  monthBudget = { amount, month: new Date().toISOString().slice(0, 7) };
+  localStorage.setItem('month_budget', JSON.stringify(monthBudget));
+  renderAll();
+  toast('月总预算已更新');
 }
 
 function renderBudgetSettings() {
@@ -1884,9 +1877,9 @@ function confirmClearData() {
       await sb('transactions').eq('user_id', currentUser.id).delete();
       await sb('lending_records').eq('user_id', currentUser.id).delete();
       await sb('budgets').eq('user_id', currentUser.id).delete();
-      await sb('month_budgets').eq('user_id', currentUser.id).delete();
       await sb('categories').eq('user_id', currentUser.id).delete();
       categories = []; dailyTxs = []; lendingRecords = []; budgets = []; monthBudget = null;
+      localStorage.removeItem('month_budget');
       await initDefaultCategories();
       renderAll(); toast('所有数据已清除，已重建默认分类');
     } catch (e) { toast('清除失败: ' + e.message); }
