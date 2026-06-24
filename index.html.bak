@@ -435,9 +435,12 @@ input,select,textarea{font-family:inherit;font-size:inherit}
   </div>
 
   <div class="settings-section">
-    <h3>👤 关于</h3>
+    <h3>👤 用户信息</h3>
     <div id="userInfoDisplay" style="padding:10px 0;font-size:14px;color:var(--text-secondary)">
-      数据存储于浏览器本地
+      加载中...
+    </div>
+    <div style="margin-top:12px;display:flex;gap:8px">
+      <button class="btn btn-sm btn-danger" onclick="logout()">退出登录</button>
     </div>
   </div>
 
@@ -547,15 +550,18 @@ input,select,textarea{font-family:inherit;font-size:inherit}
 
 <script>
 // =============================================================================
-// PWA
+// PWA 安装
 // =============================================================================
 let deferredPrompt = null;
 let swRegistration = null;
 
+// Canvas 生成 App 图标
 function generateAppIcon(size, emoji) {
   const canvas = document.createElement('canvas');
   canvas.width = size; canvas.height = size;
   const ctx = canvas.getContext('2d');
+
+  // 圆角矩形背景
   const r = size * 0.2;
   ctx.beginPath();
   ctx.moveTo(r, 0);
@@ -570,61 +576,97 @@ function generateAppIcon(size, emoji) {
   ctx.closePath();
   ctx.fillStyle = '#00BFA5';
   ctx.fill();
+
+  // 渐变高光
   const grad = ctx.createLinearGradient(0, 0, size, size);
   grad.addColorStop(0, 'rgba(255,255,255,0.2)');
   grad.addColorStop(1, 'rgba(0,0,0,0.1)');
   ctx.fillStyle = grad;
   ctx.fill();
+
+  // Emoji 文字
   ctx.font = `${size * 0.55}px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(emoji, size / 2, size / 2);
+
   return canvas.toDataURL('image/png');
 }
 
+// 动态生成 manifest
 function createManifest() {
   const icon192 = generateAppIcon(192, '💰');
   const icon512 = generateAppIcon(512, '💰');
+
   const manifest = {
-    name: '记账本', short_name: '记账本', description: '个人财务管理',
-    start_url: '.', display: 'standalone', orientation: 'any',
-    background_color: '#f1f5f9', theme_color: '#00BFA5', lang: 'zh-CN',
+    name: '记账本',
+    short_name: '记账本',
+    description: '个人财务管理 - 云同步记账',
+    start_url: '.',
+    display: 'standalone',
+    orientation: 'any',
+    background_color: '#f1f5f9',
+    theme_color: '#00BFA5',
+    lang: 'zh-CN',
     categories: ['finance', 'productivity'],
     icons: [
       { src: icon192, sizes: '192x192', type: 'image/png', purpose: 'any maskable' },
       { src: icon512, sizes: '512x512', type: 'image/png', purpose: 'any maskable' }
     ]
   };
+
   const blob = new Blob([JSON.stringify(manifest)], { type: 'application/json' });
+  const manifestUrl = URL.createObjectURL(blob);
+
   const link = document.createElement('link');
   link.rel = 'manifest';
-  link.href = URL.createObjectURL(blob);
+  link.href = manifestUrl;
   document.head.appendChild(link);
+
+  // 同时设置 apple-touch-icon 为生成的图标
   const touchIcon = document.querySelector('link[rel="apple-touch-icon"]');
   if (touchIcon) touchIcon.href = icon192;
 }
 
+// 注册 Service Worker
 async function registerSW() {
-  if (!('serviceWorker' in navigator)) return;
+  if (!('serviceWorker' in navigator)) {
+    console.log('[PWA] Service Worker 不支持');
+    return;
+  }
+
   try {
+    // 尝试先注册同目录下的 sw.js
     swRegistration = await navigator.serviceWorker.register('sw.js');
+    console.log('[PWA] Service Worker 已注册:', swRegistration.scope);
+
+    // 监听更新
     swRegistration.addEventListener('updatefound', () => {
-      const nw = swRegistration.installing;
-      if (!nw) return;
-      nw.addEventListener('statechange', () => {
-        if (nw.state === 'installed' && navigator.serviceWorker.controller) showUpdateToast();
+      const newWorker = swRegistration.installing;
+      if (!newWorker) return;
+      newWorker.addEventListener('statechange', () => {
+        if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+          showUpdateToast();
+        }
       });
     });
-    setInterval(() => { if (swRegistration) swRegistration.update(); }, 30 * 60 * 1000);
-  } catch (e) { console.warn('[PWA] SW failed:', e.message); }
+
+    // 定期检查更新（每30分钟）
+    setInterval(() => {
+      if (swRegistration) swRegistration.update();
+    }, 30 * 60 * 1000);
+
+  } catch (err) {
+    console.warn('[PWA] Service Worker 注册失败（可能sw.js未部署）:', err.message);
+  }
 }
 
 function showUpdateToast() {
-  const t = document.createElement('div');
-  t.className = 'update-toast';
-  t.innerHTML = '<span>🔄 有新版本可用</span><button style="background:var(--primary);color:#fff;border:none;padding:4px 12px;border-radius:12px;cursor:pointer;font-size:12px" onclick="applyUpdate()">更新</button>';
-  document.body.appendChild(t);
-  setTimeout(() => t.remove(), 15000);
+  const toast = document.createElement('div');
+  toast.className = 'update-toast';
+  toast.innerHTML = '<span>🔄 有新版本可用</span><button style="background:var(--primary);color:#fff;border:none;padding:4px 12px;border-radius:12px;cursor:pointer;font-size:12px" onclick="applyUpdate()">更新</button>';
+  document.body.appendChild(toast);
+  setTimeout(() => toast.remove(), 15000);
 }
 
 function applyUpdate() {
@@ -633,32 +675,47 @@ function applyUpdate() {
   window.location.reload();
 }
 
+// 安装提示
 window.addEventListener('beforeinstallprompt', (e) => {
   e.preventDefault();
   deferredPrompt = e;
+  // 检查是否之前关闭过
   const dismissed = localStorage.getItem('pwa_install_dismissed');
   if (!dismissed || Date.now() - parseInt(dismissed) > 7 * 24 * 3600 * 1000) {
     document.getElementById('installBanner').classList.add('show');
   }
 });
 
+// 检测是否已安装（独立窗口运行）
 function isStandalone() {
   return window.matchMedia('(display-mode: standalone)').matches
-    || navigator.standalone || document.referrer.includes('android-app://');
+    || navigator.standalone
+    || document.referrer.includes('android-app://');
 }
 
 async function installApp() {
   if (!deferredPrompt) {
+    // 对于不支持 beforeinstallprompt 的浏览器，显示手动安装指引
+    const isMac = /Mac/i.test(navigator.userAgent);
     const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
-    if (isIOS) alert('📲 iOS 安装方法：\n\n1. 点击 Safari 底部的「分享」按钮\n2. 选择「添加到主屏幕」\n3. 点击「添加」即可');
-    else if (/Mac/i.test(navigator.userAgent)) alert('💻 桌面安装方法：\n\n1. 在 Chrome/Edge 地址栏右侧点击安装图标\n2. 或通过菜单 → 更多工具 → 创建快捷方式');
-    else alert('📲 安装方法：\n\n1. 在浏览器菜单中找到「安装」或「添加到主屏幕」\n2. 点击确认即可');
+    if (isIOS) {
+      alert('📲 iOS 安装方法：\n\n1. 点击 Safari 底部的「分享」按钮\n2. 选择「添加到主屏幕」\n3. 点击「添加」即可');
+    } else if (isMac) {
+      alert('💻 桌面安装方法：\n\n1. 在 Chrome/Edge 地址栏右侧点击安装图标\n2. 或通过菜单 → 更多工具 → 创建快捷方式');
+    } else {
+      alert('📲 安装方法：\n\n1. 在浏览器菜单中找到「安装」或「添加到主屏幕」\n2. 点击确认即可');
+    }
     return;
   }
+
   deferredPrompt.prompt();
   const { outcome } = await deferredPrompt.userChoice;
   deferredPrompt = null;
   document.getElementById('installBanner').classList.remove('show');
+
+  if (outcome === 'accepted') {
+    console.log('[PWA] 用户接受了安装');
+  }
 }
 
 function dismissInstall() {
@@ -666,14 +723,18 @@ function dismissInstall() {
   localStorage.setItem('pwa_install_dismissed', Date.now().toString());
 }
 
+// 监听应用安装完成
 window.addEventListener('appinstalled', () => {
+  console.log('[PWA] 应用已安装');
   document.getElementById('installBanner').classList.remove('show');
   deferredPrompt = null;
 });
 
 // =============================================================================
-// 本地存储
+// 本地存储版记账本
+// 使用 localStorage，打开即用，无需登录
 // =============================================================================
+
 const STORAGE_KEY = 'bookkeeping_data';
 
 let categories = [];
@@ -681,10 +742,14 @@ let dailyTxs = [];
 let lendingRecords = [];
 let budgets = [];
 let monthBudget = null;
+
 let filterYear, filterPeriod, filterValue;
-let editingDTxId = null, editingLendId = null;
+let editingDTxId = null;
+let editingLendId = null;
+
 const chartInstances = {};
 
+// 默认分类
 function getDefaultCategories() {
   return [
     { id: 'exp-1', name: '餐饮', icon: '🍔', type: 'expense', color: '#FF6B6B', parent_id: null, sort_order: 0 },
@@ -705,29 +770,55 @@ function getDefaultCategories() {
 function loadData() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) { categories = getDefaultCategories(); dailyTxs = []; lendingRecords = []; budgets = []; monthBudget = null; saveData(); return; }
+    if (!raw) {
+      categories = getDefaultCategories();
+      dailyTxs = []; lendingRecords = []; budgets = []; monthBudget = null;
+      saveData();
+      return;
+    }
     const data = JSON.parse(raw);
     categories = data.categories || getDefaultCategories();
     dailyTxs = data.dailyTxs || [];
     lendingRecords = data.lendingRecords || [];
     budgets = data.budgets || [];
     monthBudget = data.monthBudget || null;
-  } catch (e) { categories = getDefaultCategories(); dailyTxs = []; lendingRecords = []; budgets = []; monthBudget = null; }
+  } catch (e) {
+    categories = getDefaultCategories();
+    dailyTxs = []; lendingRecords = []; budgets = []; monthBudget = null;
+  }
 }
 
 function saveData() {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ categories, dailyTxs, lendingRecords, budgets, monthBudget })); }
-  catch (e) { toast('保存失败：存储空间不足'); }
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ categories, dailyTxs, lendingRecords, budgets, monthBudget }));
+  } catch (e) {
+    toast('保存失败：存储空间不足');
+  }
 }
 
 // =============================================================================
-// 工具
+// 全局状态
+// =============================================================================
+let categories = [];
+let dailyTxs = [];
+let lendingRecords = [];
+let budgets = [];
+let monthBudget = null;
+
+let filterYear, filterPeriod, filterValue;
+let editingDTxId = null;
+let editingLendId = null;
+
+const chartInstances = {};
+
+// =============================================================================
+// 工具函数
 // =============================================================================
 function uuid() { return Date.now().toString(36) + '_' + Math.random().toString(36).substr(2, 8); }
 function fmt(n) { return '¥' + Number(n).toFixed(2); }
-function fmtDate(d) { if (!d) return ''; const p = d.split('-'); return parseInt(p[1]) + '月' + parseInt(p[2]) + '日'; }
-function getDayOfWeek(d) { if (!d) return ''; return ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][new Date(d + 'T00:00:00').getDay()]; }
-function escapeHTML(s) { if (!s) return ''; const el = document.createElement('div'); el.textContent = s; return el.innerHTML; }
+function fmtDate(d) { if(!d) return ''; const p = d.split('-'); return parseInt(p[1]) + '月' + parseInt(p[2]) + '日'; }
+function getDayOfWeek(d) { if(!d) return ''; return ['周日','周一','周二','周三','周四','周五','周六'][new Date(d + 'T00:00:00').getDay()]; }
+function escapeHTML(s) { if(!s) return ''; const el = document.createElement('div'); el.textContent = s; return el.innerHTML; }
 function today() { return new Date().toISOString().split('T')[0]; }
 function currentYear() { return new Date().getFullYear(); }
 function currentMonth() { return new Date().getMonth() + 1; }
@@ -737,7 +828,8 @@ function getDateRange() {
   const y = parseInt(filterYear);
   if (filterPeriod === 'year') return { start: y + '-01-01', end: y + '-12-31' };
   if (filterPeriod === 'quarter') {
-    const q = parseInt(filterValue), sm = (q - 1) * 3 + 1, em = sm + 2;
+    const q = parseInt(filterValue);
+    const sm = (q - 1) * 3 + 1, em = sm + 2;
     const lastDay = new Date(y, em, 0).getDate();
     return { start: monthStr(y, sm) + '-01', end: monthStr(y, em) + '-' + String(lastDay).padStart(2, '0') };
   }
@@ -754,10 +846,390 @@ function toast(msg, d = 2000) {
   const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg;
   c.appendChild(t); setTimeout(() => t.remove(), d);
 }
+
 let _confirmCB = null;
-function confirm(msg, cb) { document.getElementById('confirmMsg').textContent = msg; _confirmCB = cb; document.getElementById('confirmDialog').classList.add('open'); }
+function confirm(msg, cb) {
+  document.getElementById('confirmMsg').textContent = msg;
+  _confirmCB = cb;
+  document.getElementById('confirmDialog').classList.add('open');
+}
 function closeConfirm() { document.getElementById('confirmDialog').classList.remove('open'); _confirmCB = null; }
 function execConfirm() { if (_confirmCB) _confirmCB(); closeConfirm(); }
+
+// =============================================================================
+// 认证相关
+// =============================================================================
+function showLoginForm() {
+  document.getElementById('loginForm').classList.add('active');
+  document.getElementById('registerForm').classList.remove('active');
+  document.querySelectorAll('.auth-tab')[0].classList.add('active');
+  document.querySelectorAll('.auth-tab')[1].classList.remove('active');
+  document.getElementById('authSwitch').innerHTML = '还没有账号？<a onclick="showRegisterForm()">立即注册</a>';
+}
+
+function showRegisterForm() {
+  document.getElementById('loginForm').classList.remove('active');
+  document.getElementById('registerForm').classList.add('active');
+  document.querySelectorAll('.auth-tab')[0].classList.remove('active');
+  document.querySelectorAll('.auth-tab')[1].classList.add('active');
+  document.getElementById('authSwitch').innerHTML = '已有账号？<a onclick="showLoginForm()">立即登录</a>';
+}
+
+async function handleLogin() {
+  const email = document.getElementById('loginEmail').value.trim();
+  const password = document.getElementById('loginPassword').value;
+  if (!email) { toast('请输入邮箱'); return; }
+  if (!password) { toast('请输入密码'); return; }
+
+  toast('正在登录...');
+  try {
+    const result = await sbSignIn(email, password);
+    if (result.error) {
+      const errMsg = result.error.error_description || result.error.message || '登录失败';
+      toast('登录失败: ' + errMsg);
+    } else {
+      hideAuthModal();
+      toast('登录成功！');
+      await loadData();
+      renderAll();
+    }
+  } catch (err) {
+    toast('登录出错: ' + err.message);
+  }
+}
+
+async function handleRegister() {
+  const email = document.getElementById('regEmail').value.trim();
+  const password = document.getElementById('regPassword').value;
+  const confirm = document.getElementById('regConfirm').value;
+
+  if (!email) { toast('请输入邮箱'); return; }
+  if (password.length < 6) { toast('密码至少6位'); return; }
+  if (password !== confirm) { toast('两次密码不一致'); return; }
+
+  toast('注册中...');
+  try {
+    const result = await sbSignUp(email, password);
+    if (result.error) {
+      const msg = result.error.msg || result.error.error_description || '注册失败';
+      toast(msg.includes('already') ? '该邮箱已注册，请登录' : msg);
+      if (msg.includes('already')) showLoginForm();
+    } else {
+      toast('注册成功！请登录');
+      showLoginForm();
+    }
+  } catch (err) {
+    toast('注册出错: ' + err.message);
+  }
+}
+
+function hideAuthModal() {
+  document.getElementById('authModal').style.display = 'none';
+}
+
+function showAuthModal() {
+  document.getElementById('authModal').style.display = 'flex';
+  document.getElementById('statusMsg').textContent = currentUser ? '已登录' : '请登录或注册';
+}
+
+async function logout() {
+  await sbSignOut();
+  toast('已退出登录');
+  categories = []; dailyTxs = []; lendingRecords = []; budgets = []; monthBudget = null;
+  showAuthModal();
+}
+
+// =============================================================================
+// 数据加载
+// =============================================================================
+async function loadData() {
+  if (!currentUser) return;
+
+  try {
+    const cats = await sb('categories').eq('user_id', currentUser.id).order('sort_order', { ascending: true }).select('*');
+    if (cats && cats.length > 0) categories = cats;
+    else { await initDefaultCategories(); }
+  } catch (e) { console.error('Load categories:', e); }
+
+  try {
+    const txs = await sb('transactions').eq('user_id', currentUser.id).order('date', { ascending: false }).select('*');
+    dailyTxs = txs || [];
+  } catch (e) { console.error('Load transactions:', e); }
+
+  try {
+    const lends = await sb('lending_records').eq('user_id', currentUser.id).order('created_at', { ascending: false }).select('*');
+    lendingRecords = lends || [];
+  } catch (e) { console.error('Load lending:', e); }
+
+  try {
+    const buds = await sb('budgets').eq('user_id', currentUser.id).select('*');
+    budgets = buds || [];
+  } catch (e) { console.error('Load budgets:', e); }
+
+  try {
+    const month = new Date().toISOString().slice(0, 7);
+    const monthBud = await sb('month_budgets').eq('user_id', currentUser.id).eq('month', month).select('*');
+    monthBudget = monthBud && monthBud.length > 0 ? monthBud[0] : null;
+  } catch (e) { monthBudget = null; }
+}
+
+async function initDefaultCategories() {
+  const defaults = [
+    { name: '餐饮', icon: '🍔', type: 'expense', color: '#FF6B6B' },
+    { name: '交通', icon: '🚗', type: 'expense', color: '#4ECDC4' },
+    { name: '购物', icon: '🛍️', type: 'expense', color: '#45B7D1' },
+    { name: '住房', icon: '🏠', type: 'expense', color: '#96CEB4' },
+    { name: '娱乐', icon: '🎮', type: 'expense', color: '#FFEAA7' },
+    { name: '医疗', icon: '💊', type: 'expense', color: '#DFE6E9' },
+    { name: '教育', icon: '📚', type: 'expense', color: '#74B9FF' },
+    { name: '其他', icon: '📦', type: 'expense', color: '#A29BFE' },
+    { name: '工资', icon: '💰', type: 'income', color: '#00B894' },
+    { name: '奖金', icon: '🎁', type: 'income', color: '#FDCB6E' },
+    { name: '投资', icon: '📈', type: 'income', color: '#E17055' },
+    { name: '兼职', icon: '💼', type: 'income', color: '#6C5CE7' },
+  ];
+  const toInsert = defaults.map((d, i) => ({ user_id: currentUser.id, ...d, sort_order: i }));
+  try {
+    const result = await sb('categories').insert(toInsert);
+    categories = result.data || [];
+  } catch (e) { console.error('Init categories:', e); }
+}
+
+// =============================================================================
+// 页面渲染
+// =============================================================================
+function renderAll() {
+  renderBudgetRings();
+  renderSummaryCards();
+  renderDailyBills();
+  renderLendingBills();
+}
+
+function renderBudgetRings() {
+  const month = new Date().toISOString().slice(0, 7);
+  const monthStart = month + '-01';
+  const monthEnd = month + '-31';
+  const monthExpenses = dailyTxs.filter(t => t.date >= monthStart && t.date <= monthEnd && t.type === 'expense');
+  const totalSpent = monthExpenses.reduce((sum, t) => sum + t.amount, 0);
+
+  const spentMap = {};
+  monthExpenses.forEach(t => {
+    const catId = t.secondary_category_id || t.primary_category_id;
+    spentMap[catId] = (spentMap[catId] || 0) + t.amount;
+  });
+
+  let html = '';
+
+  // 月总预算圆环
+  const totalBudget = monthBudget ? monthBudget.amount : 0;
+  const totalPct = totalBudget > 0 ? Math.round((totalSpent / totalBudget) * 100) : 0;
+  const circumference = 201;
+  const offset = circumference - (Math.min(totalPct, 100) / 100) * circumference;
+  let ringClass = '', pctClass = '';
+  if (totalPct >= 100) { ringClass = 'danger'; pctClass = 'danger'; }
+  else if (totalPct >= 80) { ringClass = 'warn'; pctClass = 'warn'; }
+
+  html += `
+    <div class="budget-ring-card ${ringClass}">
+      <div class="ring-wrapper">
+        <svg class="ring-svg" width="80" height="80" viewBox="0 0 80 80">
+          <circle class="ring-bg" cx="40" cy="40" r="32"/>
+          <circle class="ring-fill ${ringClass}" cx="40" cy="40" r="32"
+            stroke-dasharray="${circumference}" stroke-dashoffset="${offset}"/>
+        </svg>
+        <div class="ring-text">
+          <div class="ring-percent ${pctClass}">${totalPct}%</div>
+          <div class="ring-label">已用</div>
+        </div>
+      </div>
+      <div class="ring-title">📅 月总预算</div>
+      <div class="ring-amount">${fmt(totalSpent)} / ${fmt(totalBudget)}</div>
+    </div>
+  `;
+
+  // 分类预算圆环
+  const monthBudgets = budgets.filter(b => !b.month || b.month === month);
+  monthBudgets.forEach(b => {
+    const cat = categories.find(c => c.id === b.category_id);
+    if (!cat) return;
+    const spent = spentMap[b.category_id] || 0;
+    const pct = b.amount > 0 ? Math.round((spent / b.amount) * 100) : 0;
+    const off = circumference - (Math.min(pct, 100) / 100) * circumference;
+    let cls = '', pcls = '';
+    if (pct >= 100) { cls = 'danger'; pcls = 'danger'; }
+    else if (pct >= 80) { cls = 'warn'; pcls = 'warn'; }
+
+    html += `
+      <div class="budget-ring-card ${cls}">
+        <div class="ring-wrapper">
+          <svg class="ring-svg" width="80" height="80" viewBox="0 0 80 80">
+            <circle class="ring-bg" cx="40" cy="40" r="32"/>
+            <circle class="ring-fill ${cls}" cx="40" cy="40" r="32"
+              stroke-dasharray="${circumference}" stroke-dashoffset="${off}"/>
+          </svg>
+          <div class="ring-text">
+            <div class="ring-percent ${pcls}">${pct}%</div>
+          </div>
+        </div>
+        <div class="ring-title">${cat.icon} ${cat.name}</div>
+        <div class="ring-amount">${fmt(spent)} / ${fmt(b.amount)}</div>
+      </div>
+    `;
+  });
+
+  if (html === '') {
+    html = `<div style="padding:16px;background:var(--primary-light);border-radius:var(--radius-sm);border:1px dashed var(--primary);cursor:pointer;width:100%" onclick="showPage('settings')">
+      <span style="font-size:13px;color:var(--primary)">📊 暂无预算设置，点击前往设置页面</span>
+    </div>`;
+  }
+
+  document.getElementById('budgetRings').innerHTML = html;
+}
+
+function renderSummaryCards() {
+  const { start, end } = getDateRange();
+  const txs = dailyTxs.filter(t => t.date >= start && t.date <= end);
+  let inc = 0, exp = 0;
+  txs.forEach(t => { if (t.type === 'income') inc += t.amount; else exp += t.amount; });
+
+  const lentAmount = lendingRecords.filter(l => l.status === 'lent' || l.status === 'overdue').reduce((s, l) => s + l.amount, 0);
+
+  document.getElementById('summaryRow').innerHTML = `
+    <div class="summary-card"><div class="sc-label">📈 收入</div><div class="sc-amount green">${fmt(inc)}</div></div>
+    <div class="summary-card"><div class="sc-label">📉 支出</div><div class="sc-amount red">${fmt(exp)}</div></div>
+    <div class="summary-card"><div class="sc-label">💎 结余</div><div class="sc-amount primary">${fmt(inc - exp)}</div></div>
+    <div class="summary-card"><div class="sc-label">💸 借出中</div><div class="sc-amount red">${fmt(lentAmount)}</div></div>
+  `;
+}
+
+function renderDailyBills() {
+  const { start, end } = getDateRange();
+  const txs = dailyTxs.filter(t => t.date >= start && t.date <= end);
+  const container = document.getElementById('dailyBillList');
+
+  if (txs.length === 0) {
+    container.innerHTML = '<div class="empty-state"><div class="empty-icon">📝</div><p>暂无记录，点击「+ 记一笔」开始</p></div>';
+    return;
+  }
+
+  const groups = {};
+  txs.forEach(tx => {
+    if (!groups[tx.date]) groups[tx.date] = { income: [], expense: [] };
+    groups[tx.date][tx.type].push(tx);
+  });
+
+  let html = '';
+  const sortedDates = Object.keys(groups).sort((a, b) => b.localeCompare(a));
+
+  for (const date of sortedDates) {
+    const g = groups[date];
+    const dayInc = g.income.reduce((s, t) => s + t.amount, 0);
+    const dayExp = g.expense.reduce((s, t) => s + t.amount, 0);
+
+    html += `<div class="day-group">
+      <div class="day-header">
+        <span>📅 ${fmtDate(date)} ${getDayOfWeek(date)}</span>
+        <span class="day-total" style="color:${dayInc - dayExp >= 0 ? 'var(--income)' : 'var(--expense)'}">小计 ${fmt(dayInc - dayExp)} · 收${fmt(dayInc)} 支${fmt(dayExp)}</span>
+      </div>`;
+
+    for (const tx of g.income) html += renderTxRow(tx);
+    if (g.income.length > 0 && g.expense.length > 0) html += `<div class="day-divider"><span>💰 收入</span><span>支出 💳</span></div>`;
+    for (const tx of g.expense) html += renderTxRow(tx);
+    html += '</div>';
+  }
+  container.innerHTML = html;
+}
+
+function renderTxRow(tx) {
+  const cat = categories.find(c => c.id === (tx.secondary_category_id || tx.primary_category_id));
+  const primary = categories.find(c => c.id === tx.primary_category_id);
+  const icon = cat ? cat.icon : (primary ? primary.icon : '📦');
+  const label = cat ? cat.name : (primary ? primary.name : '未分类');
+  const subLabel = cat && primary ? primary.name : (tx.note || '');
+  return `<div class="tx-row" onclick="editDailyTx('${tx.id}')">
+    <div class="tx-icon-sm ${tx.type}">${icon}</div>
+    <div class="tx-info">
+      <div class="tx-title">${label}</div>
+      <div class="tx-sub">${subLabel}${tx.note && subLabel !== tx.note ? ' · ' + escapeHTML(tx.note) : ''}</div>
+    </div>
+    <div class="tx-amount ${tx.type}">${tx.type === 'income' ? '+' : '-'}${fmt(tx.amount)}</div>
+  </div>`;
+}
+
+function renderLendingBills() {
+  const container = document.getElementById('lendingBillList');
+  if (lendingRecords.length === 0) {
+    container.innerHTML = '<div class="empty-state"><div class="empty-icon">💸</div><p>暂无出借记录</p></div>';
+    return;
+  }
+
+  const order = { overdue: 0, lent: 1, returned: 2 };
+  const sorted = [...lendingRecords].sort((a, b) => (order[a.status] || 0) - (order[b.status] || 0));
+  const todayDate = today();
+
+  container.innerHTML = sorted.map(r => {
+    const statusLabels = { lent: '已借出', returned: '已归还', overdue: '已逾期' };
+    let status = r.status;
+    if (status === 'lent' && r.expected_return_date && r.expected_return_date < todayDate) status = 'overdue';
+    return `<div class="lending-row" onclick="editLending('${r.id}')">
+      <div class="lending-avatar ${status}">👤</div>
+      <div class="lending-info">
+        <div class="lending-name">${escapeHTML(r.borrower_name)}${r.note ? ' · ' + escapeHTML(r.note) : ''}</div>
+        <div class="lending-dates">借出：${fmtDate(r.lend_date)}${r.expected_return_date ? ' · 预计：' + fmtDate(r.expected_return_date) : ''}${r.actual_return_date ? ' · 实际：' + fmtDate(r.actual_return_date) : ''}</div>
+      </div>
+      <span class="lending-status ${status}">${statusLabels[status]}</span>
+      <span class="lending-amount">${fmt(r.amount)}</span>
+    </div>`;
+  }).join('');
+}
+
+// =============================================================================
+// 时间筛选
+// =============================================================================
+function initTimeFilter() {
+  const y = currentYear(), m = currentMonth();
+  filterYear = y; filterPeriod = 'month'; filterValue = m;
+
+  const ySel = document.getElementById('filterYear');
+  ySel.innerHTML = '';
+  for (let i = y; i >= y - 5; i--) ySel.innerHTML += `<option value="${i}">${i}年</option>`;
+  ySel.value = y;
+
+  updateFilterValueOptions();
+}
+
+function updateFilterValueOptions() {
+  const vSel = document.getElementById('filterValue');
+  const period = document.getElementById('filterPeriod').value;
+  vSel.innerHTML = '';
+  if (period === 'year') {
+    vSel.innerHTML = '<option value="1">全年</option>';
+  } else if (period === 'quarter') {
+    for (let i = 1; i <= 4; i++) vSel.innerHTML += `<option value="${i}">Q${i}</option>`;
+    vSel.value = Math.ceil(currentMonth() / 3);
+  } else {
+    for (let i = 1; i <= 12; i++) vSel.innerHTML += `<option value="${i}">${i}月</option>`;
+    vSel.value = currentMonth();
+  }
+}
+
+function onFilterChange() {
+  filterYear = parseInt(document.getElementById('filterYear').value);
+  filterPeriod = document.getElementById('filterPeriod').value;
+  updateFilterValueOptions();
+  filterValue = document.getElementById('filterValue').value;
+  renderAll();
+}
+
+function resetFilter() {
+  const y = currentYear(), m = currentMonth();
+  document.getElementById('filterYear').value = y;
+  document.getElementById('filterPeriod').value = 'month';
+  updateFilterValueOptions();
+  document.getElementById('filterValue').value = m;
+  filterYear = y; filterPeriod = 'month'; filterValue = m;
+  renderAll();
+}
 
 // =============================================================================
 // 页面导航
@@ -771,130 +1243,18 @@ function showPage(page) {
 }
 
 // =============================================================================
-// 渲染
-// =============================================================================
-function renderAll() { renderBudgetRings(); renderSummaryCards(); renderDailyBills(); renderLendingBills(); }
-
-function renderBudgetRings() {
-  const month = new Date().toISOString().slice(0, 7);
-  const monthStart = month + '-01', monthEnd = month + '-31';
-  const monthExpenses = dailyTxs.filter(t => t.date >= monthStart && t.date <= monthEnd && t.type === 'expense');
-  const totalSpent = monthExpenses.reduce((sum, t) => sum + t.amount, 0);
-  const spentMap = {};
-  monthExpenses.forEach(t => { const cid = t.secondary_category_id || t.primary_category_id; spentMap[cid] = (spentMap[cid] || 0) + t.amount; });
-
-  let html = '';
-  const totalBudget = monthBudget ? monthBudget.amount : 0;
-  const totalPct = totalBudget > 0 ? Math.round((totalSpent / totalBudget) * 100) : 0;
-  const circ = 201;
-  const offset = circ - (Math.min(totalPct, 100) / 100) * circ;
-  let rc = '', pc = '';
-  if (totalPct >= 100) { rc = 'danger'; pc = 'danger'; } else if (totalPct >= 80) { rc = 'warn'; pc = 'warn'; }
-
-  html += `<div class="budget-ring-card ${rc}"><div class="ring-wrapper"><svg class="ring-svg" width="80" height="80" viewBox="0 0 80 80"><circle class="ring-bg" cx="40" cy="40" r="32"/><circle class="ring-fill ${rc}" cx="40" cy="40" r="32" stroke-dasharray="${circ}" stroke-dashoffset="${offset}"/></svg><div class="ring-text"><div class="ring-percent ${pc}">${totalPct}%</div><div class="ring-label">已用</div></div></div><div class="ring-title">📅 月总预算</div><div class="ring-amount">${fmt(totalSpent)} / ${fmt(totalBudget)}</div></div>`;
-
-  const monthBudgets = budgets.filter(b => !b.month || b.month === month);
-  monthBudgets.forEach(b => {
-    const cat = categories.find(c => c.id === b.category_id); if (!cat) return;
-    const spent = spentMap[b.category_id] || 0;
-    const pct = b.amount > 0 ? Math.round((spent / b.amount) * 100) : 0;
-    const off = circ - (Math.min(pct, 100) / 100) * circ;
-    let cls = '', pcls = '';
-    if (pct >= 100) { cls = 'danger'; pcls = 'danger'; } else if (pct >= 80) { cls = 'warn'; pcls = 'warn'; }
-    html += `<div class="budget-ring-card ${cls}"><div class="ring-wrapper"><svg class="ring-svg" width="80" height="80" viewBox="0 0 80 80"><circle class="ring-bg" cx="40" cy="40" r="32"/><circle class="ring-fill ${cls}" cx="40" cy="40" r="32" stroke-dasharray="${circ}" stroke-dashoffset="${off}"/></svg><div class="ring-text"><div class="ring-percent ${pcls}">${pct}%</div></div></div><div class="ring-title">${cat.icon} ${cat.name}</div><div class="ring-amount">${fmt(spent)} / ${fmt(b.amount)}</div></div>`;
-  });
-  if (html === '') { html = `<div style="padding:16px;background:var(--primary-light);border-radius:var(--radius-sm);border:1px dashed var(--primary);cursor:pointer;width:100%" onclick="showPage('settings')"><span style="font-size:13px;color:var(--primary)">📊 暂无预算，点击设置</span></div>`; }
-  document.getElementById('budgetRings').innerHTML = html;
-}
-
-function renderSummaryCards() {
-  const { start, end } = getDateRange();
-  const txs = dailyTxs.filter(t => t.date >= start && t.date <= end);
-  let inc = 0, exp = 0;
-  txs.forEach(t => { if (t.type === 'income') inc += t.amount; else exp += t.amount; });
-  const lentAmount = lendingRecords.filter(l => l.status === 'lent' || l.status === 'overdue').reduce((s, l) => s + l.amount, 0);
-  document.getElementById('summaryRow').innerHTML = `<div class="summary-card"><div class="sc-label">📈 收入</div><div class="sc-amount green">${fmt(inc)}</div></div><div class="summary-card"><div class="sc-label">📉 支出</div><div class="sc-amount red">${fmt(exp)}</div></div><div class="summary-card"><div class="sc-label">💎 结余</div><div class="sc-amount primary">${fmt(inc - exp)}</div></div><div class="summary-card"><div class="sc-label">💸 借出中</div><div class="sc-amount red">${fmt(lentAmount)}</div></div>`;
-}
-
-function renderDailyBills() {
-  const { start, end } = getDateRange();
-  const txs = dailyTxs.filter(t => t.date >= start && t.date <= end);
-  const container = document.getElementById('dailyBillList');
-  if (txs.length === 0) { container.innerHTML = '<div class="empty-state"><div class="empty-icon">📝</div><p>暂无记录，点击「+ 记一笔」开始</p></div>'; return; }
-
-  const groups = {};
-  txs.forEach(tx => { if (!groups[tx.date]) groups[tx.date] = { income: [], expense: [] }; groups[tx.date][tx.type].push(tx); });
-  let html = '';
-  const sortedDates = Object.keys(groups).sort((a, b) => b.localeCompare(a));
-  for (const date of sortedDates) {
-    const g = groups[date];
-    const di = g.income.reduce((s, t) => s + t.amount, 0), de = g.expense.reduce((s, t) => s + t.amount, 0);
-    html += `<div class="day-group"><div class="day-header"><span>📅 ${fmtDate(date)} ${getDayOfWeek(date)}</span><span class="day-total" style="color:${di - de >= 0 ? 'var(--income)' : 'var(--expense)'}">小计 ${fmt(di - de)} · 收${fmt(di)} 支${fmt(de)}</span></div>`;
-    for (const tx of g.income) html += renderTxRow(tx);
-    if (g.income.length > 0 && g.expense.length > 0) html += '<div class="day-divider"><span>💰 收入</span><span>支出 💳</span></div>';
-    for (const tx of g.expense) html += renderTxRow(tx);
-    html += '</div>';
-  }
-  container.innerHTML = html;
-}
-
-function renderTxRow(tx) {
-  const cat = categories.find(c => c.id === (tx.secondary_category_id || tx.primary_category_id));
-  const primary = categories.find(c => c.id === tx.primary_category_id);
-  const icon = cat ? cat.icon : (primary ? primary.icon : '📦');
-  const label = cat ? cat.name : (primary ? primary.name : '未分类');
-  const subLabel = cat && primary ? primary.name : (tx.note || '');
-  return `<div class="tx-row" onclick="editDailyTx('${tx.id}')"><div class="tx-icon-sm ${tx.type}">${icon}</div><div class="tx-info"><div class="tx-title">${label}</div><div class="tx-sub">${subLabel}${tx.note && subLabel !== tx.note ? ' · ' + escapeHTML(tx.note) : ''}</div></div><div class="tx-amount ${tx.type}">${tx.type === 'income' ? '+' : '-'}${fmt(tx.amount)}</div></div>`;
-}
-
-function renderLendingBills() {
-  const container = document.getElementById('lendingBillList');
-  if (lendingRecords.length === 0) { container.innerHTML = '<div class="empty-state"><div class="empty-icon">💸</div><p>暂无出借记录</p></div>'; return; }
-  const order = { overdue: 0, lent: 1, returned: 2 };
-  const sorted = [...lendingRecords].sort((a, b) => (order[a.status] || 0) - (order[b.status] || 0));
-  const todayDate = today();
-  container.innerHTML = sorted.map(r => {
-    const statusLabels = { lent: '已借出', returned: '已归还', overdue: '已逾期' };
-    let status = r.status;
-    if (status === 'lent' && r.expected_return_date && r.expected_return_date < todayDate) status = 'overdue';
-    return `<div class="lending-row" onclick="editLending('${r.id}')"><div class="lending-avatar ${status}">👤</div><div class="lending-info"><div class="lending-name">${escapeHTML(r.borrower_name)}${r.note ? ' · ' + escapeHTML(r.note) : ''}</div><div class="lending-dates">借出：${fmtDate(r.lend_date)}${r.expected_return_date ? ' · 预计：' + fmtDate(r.expected_return_date) : ''}${r.actual_return_date ? ' · 实际：' + fmtDate(r.actual_return_date) : ''}</div></div><span class="lending-status ${status}">${statusLabels[status]}</span><span class="lending-amount">${fmt(r.amount)}</span></div>`;
-  }).join('');
-}
-
-// =============================================================================
-// 时间筛选
-// =============================================================================
-function initTimeFilter() {
-  const y = currentYear(), m = currentMonth();
-  filterYear = y; filterPeriod = 'month'; filterValue = m;
-  const ySel = document.getElementById('filterYear'); ySel.innerHTML = '';
-  for (let i = y; i >= y - 5; i--) ySel.innerHTML += `<option value="${i}">${i}年</option>`;
-  ySel.value = y;
-  updateFilterValueOptions();
-}
-
-function updateFilterValueOptions() {
-  const vSel = document.getElementById('filterValue');
-  const period = document.getElementById('filterPeriod').value;
-  vSel.innerHTML = '';
-  if (period === 'year') vSel.innerHTML = '<option value="1">全年</option>';
-  else if (period === 'quarter') { for (let i = 1; i <= 4; i++) vSel.innerHTML += `<option value="${i}">Q${i}</option>`; vSel.value = Math.ceil(currentMonth() / 3); }
-  else { for (let i = 1; i <= 12; i++) vSel.innerHTML += `<option value="${i}">${i}月</option>`; vSel.value = currentMonth(); }
-}
-
-function onFilterChange() { filterYear = parseInt(document.getElementById('filterYear').value); filterPeriod = document.getElementById('filterPeriod').value; updateFilterValueOptions(); filterValue = document.getElementById('filterValue').value; renderAll(); }
-function resetFilter() { const y = currentYear(), m = currentMonth(); document.getElementById('filterYear').value = y; document.getElementById('filterPeriod').value = 'month'; updateFilterValueOptions(); document.getElementById('filterValue').value = m; filterYear = y; filterPeriod = 'month'; filterValue = m; renderAll(); }
-
-// =============================================================================
-// 记账 CRUD
+// 日常账单 CRUD
 // =============================================================================
 function openDailyModal(txId = null) {
+  if (!currentUser) { toast('请先登录'); return; }
   editingDTxId = txId;
   const delBtn = document.getElementById('dtxDeleteBtn');
+
   if (txId) {
     document.getElementById('dailyModalTitle').textContent = '编辑记录';
     document.getElementById('dtxSubmitBtn').textContent = '更新';
-    const tx = dailyTxs.find(t => t.id === txId); if (!tx) return;
+    const tx = dailyTxs.find(t => t.id === txId);
+    if (!tx) return;
     document.getElementById('dtxId').value = tx.id;
     document.getElementById('dtxAmount').value = tx.amount;
     document.getElementById('dtxDate').value = tx.date;
@@ -919,7 +1279,13 @@ function openDailyModal(txId = null) {
 }
 
 function closeDailyModal() { document.getElementById('dailyModal').classList.remove('open'); editingDTxId = null; }
-function setDTxType(type) { document.getElementById('dtxType').value = type; document.getElementById('dtxExpenseBtn').className = type === 'expense' ? 'active-expense' : ''; document.getElementById('dtxIncomeBtn').className = type === 'income' ? 'active-income' : ''; populatePrimaryCatSelect(type); }
+
+function setDTxType(type) {
+  document.getElementById('dtxType').value = type;
+  document.getElementById('dtxExpenseBtn').className = type === 'expense' ? 'active-expense' : '';
+  document.getElementById('dtxIncomeBtn').className = type === 'income' ? 'active-income' : '';
+  populatePrimaryCatSelect(type);
+}
 
 function populatePrimaryCatSelect(type) {
   const sel = document.getElementById('dtxPrimaryCat');
@@ -929,11 +1295,13 @@ function populatePrimaryCatSelect(type) {
 }
 
 function onPrimaryCatChange() {
-  const subs = categories.filter(c => c.parent_id === document.getElementById('dtxPrimaryCat').value);
-  document.getElementById('dtxSecondaryCat').innerHTML = '<option value="">-- 不选 --</option>' + subs.map(c => `<option value="${c.id}">${c.icon} ${c.name}</option>`).join('');
+  const primaryId = document.getElementById('dtxPrimaryCat').value;
+  const secSel = document.getElementById('dtxSecondaryCat');
+  const subs = categories.filter(c => c.parent_id === primaryId);
+  secSel.innerHTML = '<option value="">-- 不选 --</option>' + subs.map(c => `<option value="${c.id}">${c.icon} ${c.name}</option>`).join('');
 }
 
-function saveDailyTx(e) {
+async function saveDailyTx(e) {
   e.preventDefault();
   const id = document.getElementById('dtxId').value;
   const type = document.getElementById('dtxType').value;
@@ -942,33 +1310,60 @@ function saveDailyTx(e) {
   const primary_category_id = document.getElementById('dtxPrimaryCat').value;
   const secondary_category_id = document.getElementById('dtxSecondaryCat').value || null;
   const note = document.getElementById('dtxNote').value.trim();
+
   if (!amount || amount <= 0) { toast('请输入有效金额'); return; }
   if (!date) { toast('请选择日期'); return; }
   if (!primary_category_id) { toast('请选择分类'); return; }
 
-  const payload = { id: id || uuid(), type, amount, date, primary_category_id, secondary_category_id, note };
-  if (id) { const idx = dailyTxs.findIndex(t => t.id === id); if (idx >= 0) dailyTxs[idx] = payload; toast('已更新'); }
-  else { dailyTxs.unshift(payload); toast('已添加'); }
-  saveData(); closeDailyModal(); renderAll();
+  const payload = { user_id: currentUser.id, type, amount, date, primary_category_id, secondary_category_id, note };
+
+  try {
+    if (id) {
+      await sb('transactions').eq('id', id).update(payload);
+      const idx = dailyTxs.findIndex(t => t.id === id);
+      if (idx >= 0) dailyTxs[idx] = { ...payload, id };
+      toast('已更新');
+    } else {
+      const result = await sb('transactions').insert({ ...payload, id: uuid() });
+      if (result.data) dailyTxs.unshift(result.data[0]);
+      toast('已添加');
+    }
+    closeDailyModal();
+    renderAll();
+  } catch (err) {
+    toast('保存失败: ' + err.message);
+  }
 }
 
 function editDailyTx(id) { openDailyModal(id); }
 
 function deleteCurrentDTx() {
-  const id = document.getElementById('dtxId').value; if (!id) return;
-  confirm('确定删除这条记录？', () => { dailyTxs = dailyTxs.filter(t => t.id !== id); saveData(); closeDailyModal(); renderAll(); toast('已删除'); });
+  const id = document.getElementById('dtxId').value;
+  if (!id) return;
+  confirm('确定删除这条记录？', async () => {
+    try {
+      await sb('transactions').eq('id', id).delete();
+      dailyTxs = dailyTxs.filter(t => t.id !== id);
+      closeDailyModal();
+      renderAll();
+      toast('已删除');
+    } catch (e) { toast('删除失败'); }
+  });
 }
 
 // =============================================================================
 // 出借 CRUD
 // =============================================================================
 function openLendingModal(recId = null) {
+  if (!currentUser) { toast('请先登录'); return; }
   editingLendId = recId;
   const delBtn = document.getElementById('lendDeleteBtn');
+
   if (recId) {
     document.getElementById('lendingModalTitle').textContent = '编辑出借';
     document.getElementById('lendSubmitBtn').textContent = '更新';
-    const r = lendingRecords.find(l => l.id === recId); if (!r) return;
+    const r = lendingRecords.find(l => l.id === recId);
+    if (!r) return;
     document.getElementById('lendId').value = r.id;
     document.getElementById('lendBorrower').value = r.borrower_name;
     document.getElementById('lendAmount').value = r.amount;
@@ -996,7 +1391,7 @@ function openLendingModal(recId = null) {
 
 function closeLendingModal() { document.getElementById('lendingModal').classList.remove('open'); editingLendId = null; }
 
-function saveLending(e) {
+async function saveLending(e) {
   e.preventDefault();
   const id = document.getElementById('lendId').value;
   const borrower_name = document.getElementById('lendBorrower').value.trim();
@@ -1006,22 +1401,47 @@ function saveLending(e) {
   const actual_return_date = document.getElementById('lendActual').value || null;
   const note = document.getElementById('lendNote').value.trim();
   let status = document.getElementById('lendStatus').value;
+
   if (!borrower_name) { toast('请输入借款人'); return; }
   if (!amount || amount <= 0) { toast('请输入有效金额'); return; }
   if (!lend_date) { toast('请选择借出日期'); return; }
   if (actual_return_date) status = 'returned';
   else if (status === 'lent' && expected_return_date && expected_return_date < today()) status = 'overdue';
 
-  const payload = { id: id || uuid(), borrower_name, amount, lend_date, expected_return_date, actual_return_date, status, note };
-  if (id) { const idx = lendingRecords.findIndex(l => l.id === id); if (idx >= 0) lendingRecords[idx] = payload; toast('已更新'); }
-  else { lendingRecords.unshift(payload); toast('已添加'); }
-  saveData(); closeLendingModal(); renderAll();
+  const payload = { user_id: currentUser.id, borrower_name, amount, lend_date, expected_return_date, actual_return_date, status, note };
+
+  try {
+    if (id) {
+      await sb('lending_records').eq('id', id).update(payload);
+      const idx = lendingRecords.findIndex(l => l.id === id);
+      if (idx >= 0) lendingRecords[idx] = { ...payload, id };
+      toast('已更新');
+    } else {
+      const result = await sb('lending_records').insert({ ...payload, id: uuid() });
+      if (result.data) lendingRecords.unshift(result.data[0]);
+      toast('已添加');
+    }
+    closeLendingModal();
+    renderAll();
+  } catch (err) {
+    toast('保存失败: ' + err.message);
+  }
 }
 
 function editLending(id) { openLendingModal(id); }
+
 function deleteCurrentLending() {
-  const id = document.getElementById('lendId').value; if (!id) return;
-  confirm('确定删除这条出借记录？', () => { lendingRecords = lendingRecords.filter(l => l.id !== id); saveData(); closeLendingModal(); renderAll(); toast('已删除'); });
+  const id = document.getElementById('lendId').value;
+  if (!id) return;
+  confirm('确定删除这条出借记录？', async () => {
+    try {
+      await sb('lending_records').eq('id', id).delete();
+      lendingRecords = lendingRecords.filter(l => l.id !== id);
+      closeLendingModal();
+      renderAll();
+      toast('已删除');
+    } catch (e) { toast('删除失败'); }
+  });
 }
 
 // =============================================================================
@@ -1029,9 +1449,11 @@ function deleteCurrentLending() {
 // =============================================================================
 function initStatsFilter() {
   const y = currentYear();
-  const ySel = document.getElementById('statsYear'); ySel.innerHTML = '';
+  const ySel = document.getElementById('statsYear');
+  ySel.innerHTML = '';
   for (let i = y; i >= y - 5; i--) ySel.innerHTML += `<option value="${i}">${i}年</option>`;
   ySel.value = y;
+
   const mSel = document.getElementById('statsMonth');
   mSel.innerHTML = '<option value="">全年</option>';
   for (let i = 1; i <= 12; i++) mSel.innerHTML += `<option value="${i}">${i}月</option>`;
@@ -1044,23 +1466,48 @@ function renderStatistics() {
   const year = parseInt(document.getElementById('statsYear').value);
   const month = document.getElementById('statsMonth').value;
   let start, end;
-  if (month) { const lastDay = new Date(year, parseInt(month), 0).getDate(); start = monthStr(year, parseInt(month)) + '-01'; end = monthStr(year, parseInt(month)) + '-' + String(lastDay).padStart(2, '0'); }
-  else { start = year + '-01-01'; end = year + '-12-31'; }
+  if (month) {
+    const lastDay = new Date(year, parseInt(month), 0).getDate();
+    start = monthStr(year, parseInt(month)) + '-01';
+    end = monthStr(year, parseInt(month)) + '-' + String(lastDay).padStart(2, '0');
+  } else {
+    start = year + '-01-01'; end = year + '-12-31';
+  }
+
   const txs = dailyTxs.filter(t => t.date >= start && t.date <= end);
-  renderPieChart(txs); renderTrendChart(year, month); renderInsights(txs, month ? parseInt(month) : null);
+  renderPieChart(txs);
+  renderTrendChart(year, month);
+  renderInsights(txs, month ? parseInt(month) : null);
 }
 
 function renderPieChart(txs) {
   destroyChart('pie');
   const expenseTxs = txs.filter(t => t.type === 'expense');
-  if (expenseTxs.length === 0) { document.getElementById('pieChart').style.display = 'none'; return; }
+  if (expenseTxs.length === 0) {
+    document.getElementById('pieChart').style.display = 'none';
+    return;
+  }
   document.getElementById('pieChart').style.display = 'block';
+
   const catMap = {};
-  expenseTxs.forEach(tx => { const cat = categories.find(c => c.id === (tx.secondary_category_id || tx.primary_category_id)); const key = cat ? cat.icon + ' ' + cat.name : '其他'; catMap[key] = (catMap[key] || 0) + tx.amount; });
+  expenseTxs.forEach(tx => {
+    const cat = categories.find(c => c.id === (tx.secondary_category_id || tx.primary_category_id));
+    const primary = categories.find(c => c.id === tx.primary_category_id);
+    const key = cat ? cat.icon + ' ' + cat.name : (primary ? primary.icon + ' ' + primary.name : '其他');
+    catMap[key] = (catMap[key] || 0) + tx.amount;
+  });
+
   const entries = Object.entries(catMap).sort((a, b) => b[1] - a[1]);
-  const labels = entries.map(e => e[0]).slice(0, 10), data = entries.map(e => e[1]).slice(0, 10);
-  const colors = ['#ef4444','#f97316','#f59e0b','#eab308','#84cc16','#22c55e','#14b8a6','#06b6d4','#3b82f6','#8b5cf6'];
-  chartInstances['pie'] = new Chart(document.getElementById('pieChart').getContext('2d'), { type: 'doughnut', data: { labels, datasets: [{ data, backgroundColor: colors.slice(0, labels.length), borderWidth: 2, borderColor: '#fff' }] }, options: { responsive: true, maintainAspectRatio: true, plugins: { legend: { position: 'bottom', labels: { padding: 12, usePointStyle: true, font: { size: 11 } } }, tooltip: { callbacks: { label: c => `${c.label}: ${fmt(c.raw)}` } } } } });
+  const labels = entries.map(e => e[0]).slice(0, 10);
+  const data = entries.map(e => e[1]).slice(0, 10);
+  const colors = ['#ef4444', '#f97316', '#f59e0b', '#eab308', '#84cc16', '#22c55e', '#14b8a6', '#06b6d4', '#3b82f6', '#8b5cf6'];
+
+  const ctx = document.getElementById('pieChart').getContext('2d');
+  chartInstances['pie'] = new Chart(ctx, {
+    type: 'doughnut',
+    data: { labels, datasets: [{ data, backgroundColor: colors.slice(0, labels.length), borderWidth: 2, borderColor: '#fff' }] },
+    options: { responsive: true, maintainAspectRatio: true, plugins: { legend: { position: 'bottom', labels: { padding: 12, usePointStyle: true, font: { size: 11 } } }, tooltip: { callbacks: { label: ctx => `${ctx.label}: ${fmt(ctx.raw)}` } } } }
+  });
 }
 
 function renderTrendChart(year, selMonth) {
@@ -1068,128 +1515,226 @@ function renderTrendChart(year, selMonth) {
   const months = [], incData = [], expData = [];
   for (let m = 1; m <= 12; m++) {
     const lastDay = new Date(year, m, 0).getDate();
-    const start = monthStr(year, m) + '-01', end = monthStr(year, m) + '-' + String(lastDay).padStart(2, '0');
+    const start = monthStr(year, m) + '-01';
+    const end = monthStr(year, m) + '-' + String(lastDay).padStart(2, '0');
     const txs = dailyTxs.filter(t => t.date >= start && t.date <= end);
-    months.push(m + '月'); let inc = 0, exp = 0;
+    months.push(m + '月');
+    let inc = 0, exp = 0;
     txs.forEach(t => { if (t.type === 'income') inc += t.amount; else exp += t.amount; });
     incData.push(inc); expData.push(exp);
   }
-  chartInstances['trend'] = new Chart(document.getElementById('trendChart').getContext('2d'), { type: 'bar', data: { labels: months, datasets: [{ label: '收入', data: incData, backgroundColor: 'rgba(34,197,94,0.7)', borderColor: '#22c55e', borderWidth: 1, borderRadius: 4 }, { label: '支出', data: expData, backgroundColor: 'rgba(239,68,68,0.7)', borderColor: '#ef4444', borderWidth: 1, borderRadius: 4 }] }, options: { responsive: true, maintainAspectRatio: true, plugins: { legend: { position: 'bottom', labels: { usePointStyle: true, font: { size: 11 } } }, tooltip: { callbacks: { label: c => `${c.dataset.label}: ${fmt(c.raw)}` } } }, scales: { y: { beginAtZero: true, ticks: { callback: v => fmt(v) } } } } });
+
+  const ctx = document.getElementById('trendChart').getContext('2d');
+  chartInstances['trend'] = new Chart(ctx, {
+    type: 'bar',
+    data: { labels: months, datasets: [{ label: '收入', data: incData, backgroundColor: 'rgba(34,197,94,0.7)', borderColor: '#22c55e', borderWidth: 1, borderRadius: 4 }, { label: '支出', data: expData, backgroundColor: 'rgba(239,68,68,0.7)', borderColor: '#ef4444', borderWidth: 1, borderRadius: 4 }] },
+    options: { responsive: true, maintainAspectRatio: true, plugins: { legend: { position: 'bottom', labels: { usePointStyle: true, font: { size: 11 } } }, tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${fmt(ctx.raw)}` } } }, scales: { y: { beginAtZero: true, ticks: { callback: v => fmt(v) } } } }
+  });
 }
 
 function renderInsights(txs, selMonth) {
   const box = document.getElementById('insightBox');
   const expenseTxs = txs.filter(t => t.type === 'expense');
   if (expenseTxs.length === 0) { box.style.display = 'none'; return; }
+
   const catSpending = {};
-  expenseTxs.forEach(tx => { const sid = tx.secondary_category_id || tx.primary_category_id; catSpending[sid] = (catSpending[sid] || 0) + tx.amount; });
+  expenseTxs.forEach(tx => {
+    const secId = tx.secondary_category_id || tx.primary_category_id;
+    catSpending[secId] = (catSpending[secId] || 0) + tx.amount;
+  });
+
   const sorted = Object.entries(catSpending).sort((a, b) => b[1] - a[1]);
-  const top = Math.min(5, sorted.length), insights = [];
+  const top = Math.min(5, sorted.length);
+  const insights = [];
   for (let i = 0; i < top; i++) {
     const [catId, amount] = sorted[i];
     const cat = categories.find(c => c.id === catId);
     const name = cat ? cat.icon + ' ' + cat.name : '其他';
     const pct = expenseTxs.reduce((s, t) => s + t.amount, 0);
-    insights.push({ name, amount, share: pct > 0 ? Math.round(amount / pct * 100) : 0 });
+    const share = pct > 0 ? Math.round(amount / pct * 100) : 0;
+    insights.push({ name, amount, share });
   }
-  const warnings = insights.slice(0, 3).filter(i => i.share > 30).map(i => `<strong>${i.name}</strong> 占总支出的 ${i.share}%，消费占比偏高。`);
+
+  const warnings = [];
+  for (const ins of insights.slice(0, 3)) {
+    if (ins.share > 30) warnings.push(`<strong>${ins.name}</strong> 占总支出的 ${ins.share}%，消费占比偏高，建议控制。`);
+  }
+
   box.style.display = '';
-  box.innerHTML = `<h4>💡 消费分析</h4><ul style="margin-left:16px;font-size:13px">${insights.map(i => `<li>${i.name}：${fmt(i.amount)}，占 ${i.share}%</li>`).join('')}</ul>${warnings.length > 0 ? '<p style="margin-top:8px;font-size:13px;color:var(--expense);">⚠️ ' + warnings.join('<br>') + '</p>' : ''}`;
+  box.innerHTML = `<h4>💡 消费分析</h4><ul style="margin-left:16px;font-size:13px">${insights.map(i => `<li>${i.name}：${fmt(i.amount)}，占 ${i.share}%</li>`).join('')}</ul>${warnings.length > 0 ? `<p style="margin-top:8px;font-size:13px;color:var(--expense);">⚠️ ${warnings.join('<br>')}</p>` : ''}`;
 }
 
 // =============================================================================
 // 设置
 // =============================================================================
 function renderSettings() {
-  document.getElementById('userInfoDisplay').innerHTML = '数据存储于浏览器本地 (localStorage)';
+  // 用户信息
+  const userInfo = document.getElementById('userInfoDisplay');
+  if (currentUser) {
+    userInfo.innerHTML = `<strong>邮箱：</strong>${escapeHTML(currentUser.email)}<br><strong>用户ID：</strong>${currentUser.id.slice(0, 8)}...`;
+  } else {
+    userInfo.textContent = '未登录';
+  }
+
+  // 月预算输入
   if (monthBudget) document.getElementById('monthBudgetInput').value = monthBudget.amount;
   else document.getElementById('monthBudgetInput').value = '';
 
+  // 分类管理
   const container = document.getElementById('categorySettings');
   let html = '<h3>📂 分类管理</h3>';
+
   for (const type of ['expense', 'income']) {
     const typeLabel = type === 'expense' ? '支出分类' : '收入分类';
     const pCats = categories.filter(c => c.type === type && !c.parent_id);
     html += `<h4 style="margin:16px 0 8px;font-size:14px;">${type === 'expense' ? '🔴' : '🟢'} ${typeLabel}</h4><div class="cat-tree">`;
+
     for (const pc of pCats) {
       const subs = categories.filter(c => c.parent_id === pc.id);
-      html += `<div class="primary-cat"><div class="primary-cat-header"><span>${pc.icon} ${pc.name}</span><button class="btn btn-xs btn-danger" style="margin-left:auto" onclick="deleteCategory('${pc.id}')">×</button></div><div class="secondary-cats">`;
-      for (const sc of subs) html += `<span class="cat-tag">${sc.icon} ${sc.name} <span class="remove-tag" onclick="event.stopPropagation();deleteCategory('${sc.id}')">×</span></span>`;
-      html += `</div><div class="add-cat-form"><input type="text" id="newSecIcon_${pc.id}" placeholder="图标" maxlength="2" style="width:48px"><input type="text" id="newSecName_${pc.id}" placeholder="新二级分类" style="flex:1;min-width:80px"><button class="btn btn-xs btn-primary" onclick="addSecondaryCat('${pc.id}')">+ 添加</button></div></div>`;
+      html += `<div class="primary-cat">
+        <div class="primary-cat-header">
+          <span>${pc.icon} ${pc.name}</span>
+          <button class="btn btn-xs btn-danger" style="margin-left:auto" onclick="deleteCategory('${pc.id}')" title="删除">×</button>
+        </div>
+        <div class="secondary-cats">`;
+      for (const sc of subs) {
+        html += `<span class="cat-tag">${sc.icon} ${sc.name} <span class="remove-tag" onclick="event.stopPropagation();deleteCategory('${sc.id}')">×</span></span>`;
+      }
+      html += `</div>
+        <div class="add-cat-form">
+          <input type="text" id="newSecIcon_${pc.id}" placeholder="图标" maxlength="2" style="width:48px">
+          <input type="text" id="newSecName_${pc.id}" placeholder="新二级分类" style="flex:1;min-width:80px">
+          <button class="btn btn-xs btn-primary" onclick="addSecondaryCat('${pc.id}')">+ 添加</button>
+        </div>
+      </div>`;
     }
-    html += `<div class="add-cat-form" style="margin-top:10px"><input type="text" id="newPriIcon_${type}" placeholder="图标" maxlength="2" style="width:48px"><input type="text" id="newPriName_${type}" placeholder="新一级分类" style="flex:1;min-width:80px"><button class="btn btn-xs btn-primary" onclick="addPrimaryCat('${type}')">+ 添加一级</button></div></div>`;
+
+    html += `<div class="add-cat-form" style="margin-top:10px">
+      <input type="text" id="newPriIcon_${type}" placeholder="图标" maxlength="2" style="width:48px">
+      <input type="text" id="newPriName_${type}" placeholder="新一级分类" style="flex:1;min-width:80px">
+      <button class="btn btn-xs btn-primary" onclick="addPrimaryCat('${type}')">+ 添加一级</button>
+    </div></div>`;
   }
+
   container.innerHTML = html;
+
+  // 预算设置列表
   renderBudgetSettings();
 }
 
-function saveMonthBudget() {
+async function saveMonthBudget() {
+  if (!currentUser) return;
   const amount = parseFloat(document.getElementById('monthBudgetInput').value);
   if (!amount || amount <= 0) { toast('请输入有效的预算金额'); return; }
-  monthBudget = { amount, month: new Date().toISOString().slice(0, 7) };
-  saveData(); renderAll(); toast('月总预算已更新');
+
+  const month = new Date().toISOString().slice(0, 7);
+  try {
+    await sb('month_budgets').eq('user_id', currentUser.id).eq('month', month).delete();
+    await sb('month_budgets').insert({ user_id: currentUser.id, amount, month });
+    const monthBud = await sb('month_budgets').eq('user_id', currentUser.id).eq('month', month).select('*');
+    monthBudget = monthBud && monthBud.length > 0 ? monthBud[0] : null;
+    renderAll();
+    toast('月总预算已更新');
+  } catch (e) { toast('更新失败: ' + e.message); }
 }
 
 function renderBudgetSettings() {
-  const container = document.getElementById('budgetSettingsList'); if (!container) return;
+  const container = document.getElementById('budgetSettingsList');
+  if (!container) return;
   const month = new Date().toISOString().slice(0, 7);
+  const expenseCats = categories.filter(c => c.type === 'expense');
+
   let html = '<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">';
   html += '<span style="font-size:12px;color:var(--text-muted)">设置分类预算：</span>';
-  html += '<select id="budgetCatSelect" class="form-select" style="width:auto;min-width:140px;font-size:12px;padding:4px 8px"><option value="">选择分类...</option>';
-  for (const c of categories) html += `<option value="${c.id}">${c.icon} ${c.name}</option>`;
+  html += '<select id="budgetCatSelect" class="form-select" style="width:auto;min-width:140px;font-size:12px;padding:4px 8px">';
+  html += '<option value="">选择分类...</option>';
+  for (const c of categories) {
+    html += `<option value="${c.id}">${c.icon} ${c.name}</option>`;
+  }
   html += '</select>';
   html += '<input type="number" id="budgetAmountInput" placeholder="预算金额" min="0" step="0.01" style="width:100px;font-size:12px;padding:4px 8px" class="form-input">';
-  html += '<button class="btn btn-xs btn-primary" onclick="setBudget()">设置</button></div>';
+  html += '<button class="btn btn-xs btn-primary" onclick="setBudget()">设置</button>';
+  html += '</div>';
+
   const monthBudgets = budgets.filter(b => !b.month || b.month === month);
   if (monthBudgets.length > 0) {
-    html += '<div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:6px"><span style="font-size:12px;color:var(--text-muted)">已设预算：</span>';
-    for (const b of monthBudgets) { const cat = categories.find(c => c.id === b.category_id); html += `<span style="display:inline-block;padding:3px 10px;background:var(--bg);border-radius:10px;font-size:12px">${cat ? cat.icon + ' ' + cat.name : '未知'} ${fmt(b.amount)}<span style="cursor:pointer;color:var(--expense);margin-left:4px" onclick="deleteBudget('${b.id}')">×</span></span>`; }
+    html += '<div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:6px">';
+    html += '<span style="font-size:12px;color:var(--text-muted)">已设预算：</span>';
+    for (const b of monthBudgets) {
+      const cat = categories.find(c => c.id === b.category_id);
+      html += `<span style="display:inline-block;padding:3px 10px;background:var(--bg);border-radius:10px;font-size:12px">${cat ? cat.icon + ' ' + cat.name : '未知'} ${fmt(b.amount)}<span style="cursor:pointer;color:var(--expense);margin-left:4px" onclick="deleteBudget('${b.id}')">×</span></span>`;
+    }
     html += '</div>';
   }
+
   container.innerHTML = html;
 }
 
-function addPrimaryCat(type) {
+async function addPrimaryCat(type) {
   const icon = document.getElementById('newPriIcon_' + type).value.trim() || '📦';
   const name = document.getElementById('newPriName_' + type).value.trim();
   if (!name) { toast('请输入分类名称'); return; }
   if (categories.some(c => c.name === name && c.type === type && !c.parent_id)) { toast('该分类已存在'); return; }
-  categories.push({ id: uuid(), name, icon, type, parent_id: null, sort_order: categories.length });
-  saveData(); renderSettings(); toast('已添加');
+  try {
+    const result = await sb('categories').insert({ user_id: currentUser.id, id: uuid(), name, icon, type, parent_id: null, sort_order: categories.length });
+    if (result.data) categories.push(result.data[0]);
+    renderSettings(); toast('已添加');
+  } catch (e) { toast('添加失败'); }
 }
 
-function addSecondaryCat(primaryId) {
+async function addSecondaryCat(primaryId) {
   const icon = document.getElementById('newSecIcon_' + primaryId).value.trim() || '📦';
   const name = document.getElementById('newSecName_' + primaryId).value.trim();
   if (!name) { toast('请输入分类名称'); return; }
-  const primary = categories.find(c => c.id === primaryId); if (!primary) return;
+  const primary = categories.find(c => c.id === primaryId);
+  if (!primary) return;
   if (categories.some(c => c.name === name && c.parent_id === primaryId)) { toast('该二级分类已存在'); return; }
-  categories.push({ id: uuid(), name, icon, type: primary.type, parent_id: primaryId, sort_order: categories.length });
-  saveData(); renderSettings(); toast('已添加');
+  try {
+    const result = await sb('categories').insert({ user_id: currentUser.id, id: uuid(), name, icon, type: primary.type, parent_id: primaryId, sort_order: categories.length });
+    if (result.data) categories.push(result.data[0]);
+    renderSettings(); toast('已添加');
+  } catch (e) { toast('添加失败'); }
 }
 
-function deleteCategory(id) {
+async function deleteCategory(id) {
   const cat = categories.find(c => c.id === id); if (!cat) return;
   const hasTxs = dailyTxs.some(t => t.primary_category_id === id || t.secondary_category_id === id);
-  if (hasTxs) { toast('该分类下有账单记录，无法删除'); return; }
   const hasSubs = categories.some(c => c.parent_id === id);
-  confirm(`确定删除「${cat.icon} ${cat.name}」？${hasSubs ? '其下二级分类也将被删除。' : ''}`, () => {
-    categories = categories.filter(c => c.id !== id && c.parent_id !== id);
-    saveData(); renderSettings(); toast('已删除');
+  if (hasTxs) { toast('该分类下有账单记录，无法删除'); return; }
+  confirm(`确定删除「${cat.icon} ${cat.name}」？${hasSubs ? '其下二级分类也将被删除。' : ''}`, async () => {
+    try {
+      if (hasSubs) {
+        const subs = categories.filter(c => c.parent_id === id);
+        for (const s of subs) await sb('categories').eq('id', s.id).delete();
+      }
+      await sb('categories').eq('id', id).delete();
+      categories = categories.filter(c => c.id !== id && c.parent_id !== id);
+      renderSettings(); toast('已删除');
+    } catch (e) { toast('删除失败'); }
   });
 }
 
-function setBudget() {
+async function setBudget() {
   const catId = document.getElementById('budgetCatSelect').value;
   const amount = parseFloat(document.getElementById('budgetAmountInput').value);
   if (!catId || !amount || amount <= 0) { toast('请选择分类并输入预算'); return; }
   const month = new Date().toISOString().slice(0, 7);
-  budgets = budgets.filter(b => !(b.category_id === catId && b.month === month));
-  budgets.push({ id: uuid(), category_id: catId, amount, month });
-  saveData(); renderSettings(); renderAll(); toast('预算已设置');
+  try {
+    await sb('budgets').eq('user_id', currentUser.id).eq('category_id', catId).eq('month', month).delete();
+    await sb('budgets').insert({ id: uuid(), user_id: currentUser.id, category_id: catId, amount, month });
+    const buds = await sb('budgets').eq('user_id', currentUser.id).select('*');
+    budgets = buds || [];
+    renderSettings(); renderAll(); toast('预算已设置');
+  } catch (e) { toast('设置失败'); }
 }
 
-function deleteBudget(id) { budgets = budgets.filter(b => b.id !== id); saveData(); renderSettings(); renderAll(); toast('已删除'); }
+async function deleteBudget(id) {
+  try {
+    await sb('budgets').eq('id', id).delete();
+    budgets = budgets.filter(b => b.id !== id);
+    renderSettings(); renderAll(); toast('已删除');
+  } catch (e) { toast('删除失败'); }
+}
 
 // =============================================================================
 // 数据导出/清除
@@ -1203,28 +1748,59 @@ function exportData() {
 }
 
 function confirmClearData() {
-  confirm('⚠️ 确定清除所有数据？此操作不可撤销！', () => {
-    categories = getDefaultCategories(); dailyTxs = []; lendingRecords = []; budgets = []; monthBudget = null;
-    saveData(); renderAll(); toast('所有数据已清除');
+  confirm('⚠️ 确定清除所有数据？此操作不可撤销！\n建议先导出备份。', async () => {
+    try {
+      await sb('transactions').eq('user_id', currentUser.id).delete();
+      await sb('lending_records').eq('user_id', currentUser.id).delete();
+      await sb('budgets').eq('user_id', currentUser.id).delete();
+      await sb('month_budgets').eq('user_id', currentUser.id).delete();
+      await sb('categories').eq('user_id', currentUser.id).delete();
+      categories = []; dailyTxs = []; lendingRecords = []; budgets = []; monthBudget = null;
+      await initDefaultCategories();
+      renderAll(); toast('所有数据已清除，已重建默认分类');
+    } catch (e) { toast('清除失败: ' + e.message); }
   });
 }
 
 // =============================================================================
 // 初始化
 // =============================================================================
-function init() {
+async function init() {
+  // PWA 初始化
   createManifest();
   registerSW();
-  if (isStandalone()) document.getElementById('installBanner').classList.remove('show');
-  loadData();
+
+  // 如果已安装为独立应用，隐藏安装横幅
+  if (isStandalone()) {
+    document.getElementById('installBanner').classList.remove('show');
+  }
+
+  const user = await sbGetUser();
+  if (user) {
+    currentUser = user;
+    hideAuthModal();
+    await loadData();
+  } else {
+    document.getElementById('statusMsg').textContent = '请登录或注册';
+  }
+
   initTimeFilter();
   renderAll();
-  document.querySelectorAll('.modal-overlay').forEach(ov => ov.addEventListener('click', function(e) { if (e.target === this) this.classList.remove('open'); }));
-  document.addEventListener('keydown', function(e) { if (e.key === 'Escape') { document.querySelectorAll('.modal-overlay.open').forEach(m => m.classList.remove('open')); closeConfirm(); } });
+
+  document.querySelectorAll('.modal-overlay').forEach(ov => {
+    ov.addEventListener('click', function(e) { if (e.target === this) this.classList.remove('open'); });
+  });
+
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+      document.querySelectorAll('.modal-overlay.open').forEach(m => m.classList.remove('open'));
+      closeConfirm();
+    }
+  });
 }
 
 document.addEventListener('DOMContentLoaded', init);
-</script></script>
+</script>
 
 </body>
 </html>
